@@ -59,7 +59,7 @@ jobs:
           # Deterministic ordering and metadata so the digest depends only on
           # the content, which keeps manifest signing reproducible.
           tar --sort=name --owner=0 --group=0 --numeric-owner \
-            --mtime="@${GITHUB_RUN_STARTED_AT:-0}" \
+            --mtime="@$(git log -1 --format=%ct)" \
             -C "$stage/payload" -czf "$archive" .
           shasum -a 256 "$archive" >"$archive.sha256"
           echo "ARCHIVE=$archive" >>"$GITHUB_ENV"
