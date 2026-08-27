@@ -69,10 +69,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tar -tzf "$ARCHIVE" | grep -qx './src/app.js'
-          tar -tzf "$ARCHIVE" | grep -qx './node_modules/@slack/bolt/package.json'
+          # List once into a variable. Piping tar into `grep -q` makes grep
+          # exit early, and the resulting SIGPIPE fails the step under
+          # `pipefail`.
+          listing="$(tar -tzf "$ARCHIVE")"
+          grep -qx './src/app.js' <<<"$listing"
+          grep -qx './node_modules/@slack/bolt/package.json' <<<"$listing"
           # No absolute or parent-relative members.
-          ! tar -tzf "$ARCHIVE" | grep -qE '^/|(^|/)\.\.(/|$)'
+          ! grep -qE '^/|(^|/)\.\.(/|$)' <<<"$listing"
 
       - name: Publish
         env:
