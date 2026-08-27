@@ -1,0 +1,10 @@
+node_modules/
+.env
+state.json
+*.log
+.DS_Store
+.local/
+.slack/config.json
+.slack/apps*.json
+.slack/logs/
+.slack/cache/

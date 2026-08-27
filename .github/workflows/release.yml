@@ -1,0 +1,86 @@
+# Publishes an immutable release archive for a `v*` tag.
+#
+# The archive carries production `node_modules`, so the deployment target runs
+# no `npm install` during an update. There are no native modules in the
+# dependency tree, so one architecture-independent archive serves every host.
+#
+# The `.sha256` sidecar is a convenience for humans. It lives in the same
+# release as the archive, so it is not an authenticity control: deployments are
+# expected to verify the digest against a separately signed manifest.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check the tag matches package.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(node -p "require('./package.json').version")"
+          if [ "$tag_version" != "$package_version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $package_version." >&2
+            exit 1
+          fi
+          echo "VERSION=$package_version" >>"$GITHUB_ENV"
+
+      - name: Test
+        run: |
+          npm ci
+          npm test
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf node_modules
+          npm ci --omit=dev
+          stage="$(mktemp -d)"
+          mkdir -p "$stage/payload"
+          cp -R src package.json node_modules "$stage/payload/"
+          echo "$GITHUB_SHA" >"$stage/payload/BUILD_SHA"
+          archive="business-os-slack-bridge-${VERSION}.tar.gz"
+          # Deterministic ordering and metadata so the digest depends only on
+          # the content, which keeps manifest signing reproducible.
+          tar --sort=name --owner=0 --group=0 --numeric-owner \
+            --mtime="@${GITHUB_RUN_STARTED_AT:-0}" \
+            -C "$stage/payload" -czf "$archive" .
+          shasum -a 256 "$archive" >"$archive.sha256"
+          echo "ARCHIVE=$archive" >>"$GITHUB_ENV"
+          cat "$archive.sha256"
+
+      - name: Verify the archive layout a deployment expects
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -tzf "$ARCHIVE" | grep -qx './src/app.js'
+          tar -tzf "$ARCHIVE" | grep -qx './node_modules/@slack/bolt/package.json'
+          # No absolute or parent-relative members.
+          ! tar -tzf "$ARCHIVE" | grep -qE '^/|(^|/)\.\.(/|$)'
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes "business-os-slack-bridge ${VERSION} from ${GITHUB_SHA}." \
+            "$ARCHIVE" "$ARCHIVE.sha256"

@@ -1,0 +1,26 @@
+{
+  "name": "business-os-slack-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "Slack Block Kit approval surface for BusinessOS social_publishing proposals",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BlaineHeffron/business-os-slack-bridge.git"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@slack/bolt": "^4.2.0"
+  },
+  "devDependencies": {
+    "@slack/cli-hooks": "^2.0.0"
+  }
+}
