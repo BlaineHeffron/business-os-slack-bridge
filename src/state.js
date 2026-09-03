@@ -28,3 +28,14 @@ export function setProposalState(proposalId, patch) {
   state.proposals[proposalId] = { ...state.proposals[proposalId], ...patch };
   persist();
 }
+
+export const getSeenSitemapPaths = () => state.sitemap?.seenPaths ?? null;
+
+export function setSeenSitemapPaths(paths) {
+  state.sitemap = { seenPaths: [...new Set(paths)].sort() };
+  persist();
+}
+
+export function addSeenSitemapPath(path) {
+  setSeenSitemapPaths([...(getSeenSitemapPaths() ?? []), path]);
+}

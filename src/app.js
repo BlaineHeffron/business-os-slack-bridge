@@ -7,10 +7,30 @@
 // receipts are threaded under the card.
 import pkg from '@slack/bolt';
 import { config } from './config.js';
-import { listProposals, updateProposal, actOnProposal, RevisionConflictError } from './bosClient.js';
-import { loadState, getProposalState, setProposalState } from './state.js';
+import {
+  listProposals,
+  updateProposal,
+  actOnProposal,
+  ingestPublishedContent,
+  RevisionConflictError,
+} from './bosClient.js';
+import {
+  loadState,
+  getProposalState,
+  setProposalState,
+  getSeenSitemapPaths,
+  setSeenSitemapPaths,
+  addSeenSitemapPath,
+} from './state.js';
 import { proposalCard, editModal, deliveryLine } from './blocks.js';
 import { startReadinessServer } from './readiness.js';
+import {
+  extractPageMetadata,
+  extractSitemapPosts,
+  fetchText,
+  planSitemapChanges,
+  sitemapIdempotencyKey,
+} from './sitemap.js';
 
 const { App } = pkg;
 
@@ -118,6 +138,49 @@ async function syncProposal(entry, liveEnabled) {
       });
     }
     setProposalState(proposal.proposal_id, { delivery });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Optional published-content discovery
+// ---------------------------------------------------------------------------
+
+let sitemapPolling = false;
+
+async function pollSitemapOnce() {
+  if (!config.sitemapUrl || sitemapPolling) return;
+  sitemapPolling = true;
+  try {
+    const xml = await fetchText(config.sitemapUrl);
+    const posts = extractSitemapPosts(xml, {
+      startMarker: config.sitemapStartMarker,
+      endMarker: config.sitemapEndMarker,
+      publicBaseUrl: config.sitemapPublicBaseUrl,
+    });
+    const changes = planSitemapChanges(posts, getSeenSitemapPaths());
+    if (changes.baselinePaths) {
+      setSeenSitemapPaths(changes.baselinePaths);
+      console.log(`sitemap baseline saved with ${posts.length} posts`);
+      return;
+    }
+
+    for (const post of changes.newPosts) {
+      const metadata = extractPageMetadata(await fetchText(post.url));
+      await ingestPublishedContent({
+        source_kind: `sitemap:${new URL(config.sitemapUrl).hostname}`,
+        external_id: post.externalId,
+        canonical_url: post.url,
+        title: metadata.title,
+        excerpt: metadata.excerpt || undefined,
+        idempotency_key: sitemapIdempotencyKey(post.externalId),
+      });
+      addSeenSitemapPath(post.externalId);
+      console.log(`sitemap post ingested: ${post.url}`);
+    }
+  } catch (error) {
+    console.error('sitemap poll failed:', error.message);
+  } finally {
+    sitemapPolling = false;
   }
 }
 
@@ -296,4 +359,8 @@ app.view('edit_target_submit', async ({ ack, body, view }) => {
   console.log(`slack-approval-bridge running; polling ${config.bosUrl} every ${config.pollIntervalMs}ms`);
   await pollOnce();
   setInterval(pollOnce, config.pollIntervalMs);
+  if (config.sitemapUrl) {
+    await pollSitemapOnce();
+    setInterval(pollSitemapOnce, config.sitemapPollIntervalMs);
+  }
 })();

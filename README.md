@@ -32,6 +32,31 @@ loopback HTTP. It is a companion program, not a module loaded into the server.
    `delivery_outcome_unknown` is broadcast because it needs manual
    reconciliation in Buffer.
 
+## Optional sitemap discovery
+
+The bridge can detect new published pages in one marked sitemap section. This
+feature is disabled unless `SITEMAP_URL` is set. The first successful scan
+saves the current paths without ingesting them. A later path starts the
+bounded `bos_social_published_content_ingest` tool. BusinessOS still drafts the
+social text, and an approver must approve every proposal.
+
+These are the Royall Stays values:
+
+```bash
+SITEMAP_URL=https://book.royallstays.com/sitemap.xml
+SITEMAP_START_MARKER=Begin Blogs Endpoints
+SITEMAP_END_MARKER=Begin Listing Endpoints
+SITEMAP_PUBLIC_BASE_URL=https://book.royallstays.com
+```
+
+The watcher stops that scan when a marker is missing or the section is empty.
+It saves a path only after BusinessOS accepts the ingest request. This behavior
+retries temporary page or BusinessOS failures without creating duplicate
+sources.
+
+The ingest request includes the public blog URL. BusinessOS adds the tracked
+form of that URL to every generated social post before approval.
+
 ## Requirements
 
 - Node.js 20 or newer
@@ -99,6 +124,8 @@ than trusting the release itself.
   auditable dry-runs.
 - Post text must keep the tracked URL. BusinessOS rejects an edit that drops
   it, and the modal surfaces the error.
+- Sitemap discovery uses the configured public base URL. It never follows a
+  page host supplied by the sitemap.
 
 ## License
 

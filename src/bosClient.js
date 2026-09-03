@@ -67,3 +67,18 @@ export const actOnProposal = (proposalId, { action, expectedRevision, idempotenc
     idempotency_key: idempotencyKey,
     actor_id: actorId,
   });
+
+/** Register published content through the bounded BusinessOS MCP tool. */
+export async function ingestPublishedContent(arguments_) {
+  const response = await request('POST', '/api/agent-mcp', {
+    jsonrpc: '2.0',
+    id: arguments_.idempotency_key,
+    method: 'tools/call',
+    params: {
+      name: 'bos_social_published_content_ingest',
+      arguments: arguments_,
+    },
+  });
+  if (response?.error) throw new Error(`BusinessOS MCP error: ${JSON.stringify(response.error).slice(0, 500)}`);
+  return response?.result;
+}

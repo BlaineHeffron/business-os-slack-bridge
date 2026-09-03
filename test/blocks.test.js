@@ -57,7 +57,7 @@ test('Instagram without media stays editable but cannot be approved', () => {
   const instagram = {
     ...target,
     channel_id: 'ch_instagram',
-    channel_name: 'Royal L Stays Instagram',
+    channel_name: 'Royall Stays Instagram',
     platform: 'instagram',
     image_url: null,
   };
@@ -87,7 +87,7 @@ test('Google Business uses a recognizable platform marker', () => {
   const googleBusiness = {
     ...target,
     channel_id: 'ch_google',
-    channel_name: 'Royal L Stays Google Business',
+    channel_name: 'Royall Stays Google Business',
     platform: 'googlebusiness',
   };
   const blocks = proposalCard(
