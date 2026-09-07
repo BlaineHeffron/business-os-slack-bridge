@@ -22,7 +22,7 @@ import {
   setSeenSitemapPaths,
   addSeenSitemapPath,
 } from './state.js';
-import { proposalCard, editModal, deliveryLine } from './blocks.js';
+import { proposalCard, editModal, deliveryLine, dueAtForUpdate } from './blocks.js';
 import { startReadinessServer } from './readiness.js';
 import {
   extractPageMetadata,
@@ -257,6 +257,7 @@ app.action('edit_target', async ({ ack, body, client }) => {
       revision: entry.revision,
       target,
       canonicalUrl: entry.proposal.canonical_url,
+      timeZone: config.slackEditTimezone,
     }),
   });
 });
@@ -275,10 +276,22 @@ app.view('edit_target_submit', async ({ ack, body, view }) => {
   const text = modalValue(view, 'text')?.value?.trim() ?? '';
   const imageUrl = modalValue(view, 'image_url')?.value?.trim() || null;
   const scheduleMode = modalValue(view, 'schedule_mode')?.selected_option?.value ?? 'queue';
-  const dueAt = modalValue(view, 'due_at')?.value?.trim() || null;
+  const dueTime = modalValue(view, 'due_time');
+  const dueAt = dueAtForUpdate(
+    scheduleMode,
+    modalValue(view, 'due_date')?.selected_date,
+    dueTime?.selected_time,
+    dueTime?.timezone || config.slackEditTimezone,
+  );
 
   if (scheduleMode === 'scheduled' && !dueAt) {
-    await ack({ response_action: 'errors', errors: { due_at: 'Scheduled mode needs a due-at time.' } });
+    await ack({
+      response_action: 'errors',
+      errors: {
+        due_date: 'Specific time needs a date and time.',
+        due_time: 'Specific time needs a date and time.',
+      },
+    });
     return;
   }
   if (imageUrl && !imageUrl.startsWith('https://')) {

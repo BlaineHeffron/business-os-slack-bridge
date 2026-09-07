@@ -138,7 +138,84 @@ export function proposalCard(entry, { liveEnabled }) {
   return blocks;
 }
 
-export function editModal({ proposalId, revision, target, canonicalUrl }) {
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+const QUEUE_OPTION = { text: { type: 'plain_text', text: 'Next queue slot' }, value: 'queue' };
+const SCHEDULED_OPTION = { text: { type: 'plain_text', text: 'Specific time' }, value: 'scheduled' };
+
+export function usableTimeZone(timeZone) {
+  const tz = typeof timeZone === 'string' && timeZone.trim() ? timeZone.trim() : 'UTC';
+  try {
+    Intl.DateTimeFormat('en-US', { timeZone: tz }).format(0);
+    return tz;
+  } catch {
+    return 'UTC';
+  }
+}
+
+function wallParts(ms, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(ms));
+  const get = (type) => parts.find((p) => p.type === type)?.value;
+  return { date: `${get('year')}-${get('month')}-${get('day')}`, time: `${get('hour')}:${get('minute')}` };
+}
+
+function zonedWallToUtcMs(date, time, timeZone) {
+  const wanted = Date.parse(`${date}T${time}:00Z`);
+  if (Number.isNaN(wanted)) return null;
+  let utcMs = wanted;
+  for (let i = 0; i < 3; i += 1) {
+    const wall = wallParts(utcMs, timeZone);
+    const delta = wanted - Date.parse(`${wall.date}T${wall.time}:00Z`);
+    if (delta === 0) break;
+    utcMs += delta;
+  }
+  const wall = wallParts(utcMs, timeZone);
+  if (wall.date !== date || wall.time !== time) return null;
+  return utcMs;
+}
+
+function rfc3339(date, time, utcMs, timeZone) {
+  if (timeZone === 'UTC' || timeZone === 'Etc/UTC') return `${date}T${time}:00Z`;
+  const offsetMin = Math.round((Date.parse(`${date}T${time}:00Z`) - utcMs) / 60000);
+  const sign = offsetMin >= 0 ? '+' : '-';
+  const abs = Math.abs(offsetMin);
+  const hh = String(Math.floor(abs / 60)).padStart(2, '0');
+  const mm = String(abs % 60).padStart(2, '0');
+  return `${date}T${time}:00${sign}${hh}:${mm}`;
+}
+
+export function dueAtParts(dueAt, timeZone = 'UTC') {
+  if (!dueAt) return {};
+  const ms = Date.parse(dueAt);
+  if (Number.isNaN(ms)) return {};
+  return wallParts(ms, usableTimeZone(timeZone));
+}
+
+export function combineDueAt(date, time, timeZone = 'UTC') {
+  if (!DATE_RE.test(date ?? '') || !TIME_RE.test(time ?? '')) return null;
+  const zone = usableTimeZone(timeZone);
+  const utcMs = zonedWallToUtcMs(date, time, zone);
+  if (utcMs == null) return null;
+  return rfc3339(date, time, utcMs, zone);
+}
+
+export function dueAtForUpdate(scheduleMode, date, time, timeZone = 'UTC') {
+  if (scheduleMode !== 'scheduled') return undefined;
+  return combineDueAt(date, time, timeZone) ?? undefined;
+}
+
+export function editModal({ proposalId, revision, target, canonicalUrl, timeZone = 'UTC' }) {
+  const zone = usableTimeZone(timeZone);
+  const { date, time } = dueAtParts(target.due_at, zone);
   return {
     type: 'modal',
     callback_id: 'edit_target_submit',
@@ -188,28 +265,32 @@ export function editModal({ proposalId, revision, target, canonicalUrl }) {
         element: {
           type: 'static_select',
           action_id: 'value',
-          initial_option: {
-            text: {
-              type: 'plain_text',
-              text: target.schedule_mode === 'scheduled' ? 'Scheduled time' : 'Buffer queue',
-            },
-            value: target.schedule_mode,
-          },
-          options: [
-            { text: { type: 'plain_text', text: 'Buffer queue' }, value: 'queue' },
-            { text: { type: 'plain_text', text: 'Scheduled time' }, value: 'scheduled' },
-          ],
+          initial_option: target.schedule_mode === 'scheduled' ? SCHEDULED_OPTION : QUEUE_OPTION,
+          options: [QUEUE_OPTION, SCHEDULED_OPTION],
         },
       },
       {
         type: 'input',
-        block_id: 'due_at',
+        block_id: 'due_date',
         optional: true,
-        label: { type: 'plain_text', text: 'Due at (RFC3339, e.g. 2026-08-20T14:00:00Z)' },
+        label: { type: 'plain_text', text: 'Date' },
+        hint: { type: 'plain_text', text: 'Used for Specific time.' },
         element: {
-          type: 'plain_text_input',
+          type: 'datepicker',
           action_id: 'value',
-          initial_value: target.due_at ?? '',
+          ...(date ? { initial_date: date } : {}),
+        },
+      },
+      {
+        type: 'input',
+        block_id: 'due_time',
+        optional: true,
+        label: { type: 'plain_text', text: 'Time' },
+        element: {
+          type: 'timepicker',
+          action_id: 'value',
+          timezone: zone,
+          ...(time ? { initial_time: time } : {}),
         },
       },
     ],
