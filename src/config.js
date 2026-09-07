@@ -25,6 +25,7 @@ export const config = {
   sitemapEndMarker: process.env.SITEMAP_END_MARKER?.trim() || '',
   sitemapPublicBaseUrl: process.env.SITEMAP_PUBLIC_BASE_URL?.trim() || '',
   sitemapPollIntervalMs: Math.max(60000, Number(process.env.SITEMAP_POLL_INTERVAL_MS ?? 300000)),
+  slackEditTimezone: process.env.SLACK_EDIT_TIMEZONE?.trim() || 'UTC',
 };
 
 const bosHost = new URL(config.bosUrl).hostname;

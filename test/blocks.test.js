@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { proposalCard, editModal, deliveryLine } from '../src/blocks.js';
+import { proposalCard, editModal, deliveryLine, dueAtParts, combineDueAt, dueAtForUpdate } from '../src/blocks.js';
 
 const target = {
   target_id: 't1',
@@ -51,6 +51,68 @@ test('edit modal prefills current target', () => {
   const textInput = modal.blocks.find((b) => b.block_id === 'text');
   assert.equal(textInput.element.initial_value, target.text);
   assert.equal(JSON.parse(modal.private_metadata).revision, 3);
+  const scheduling = modal.blocks.find((b) => b.block_id === 'schedule_mode');
+  assert.equal(scheduling.element.initial_option.value, 'queue');
+  assert.equal(scheduling.element.initial_option.text.text, 'Next queue slot');
+  assert.deepEqual(
+    scheduling.element.options.map((o) => [o.value, o.text.text]),
+    [
+      ['queue', 'Next queue slot'],
+      ['scheduled', 'Specific time'],
+    ],
+  );
+  const dueDate = modal.blocks.find((b) => b.block_id === 'due_date');
+  const dueTime = modal.blocks.find((b) => b.block_id === 'due_time');
+  assert.equal(dueDate.element.type, 'datepicker');
+  assert.equal(dueTime.element.type, 'timepicker');
+  assert.equal(dueTime.element.timezone, 'UTC');
+  assert.equal(dueDate.element.initial_date, undefined);
+  assert.equal(dueTime.element.initial_time, undefined);
+  assert.equal(modal.blocks.some((b) => b.block_id === 'due_at'), false);
+});
+
+test('scheduled edit modal prefills UTC date and time pickers', () => {
+  const modal = editModal({
+    proposalId: 'social_1',
+    revision: 3,
+    target: { ...target, schedule_mode: 'scheduled', due_at: '2026-08-20T14:00:00-04:00' },
+    canonicalUrl: entry.proposal.canonical_url,
+  });
+  const scheduling = modal.blocks.find((b) => b.block_id === 'schedule_mode');
+  assert.equal(scheduling.element.initial_option.value, 'scheduled');
+  assert.equal(scheduling.element.initial_option.text.text, 'Specific time');
+  assert.equal(modal.blocks.find((b) => b.block_id === 'due_date').element.initial_date, '2026-08-20');
+  assert.equal(modal.blocks.find((b) => b.block_id === 'due_time').element.initial_time, '18:00');
+});
+
+test('due_at pickers combine to RFC3339 UTC and queue drops them', () => {
+  assert.deepEqual(dueAtParts('2026-08-20T14:00:00Z'), { date: '2026-08-20', time: '14:00' });
+  assert.equal(combineDueAt('2026-08-20', '14:00'), '2026-08-20T14:00:00Z');
+  assert.equal(combineDueAt('2026-02-30', '14:00'), null);
+  assert.equal(dueAtForUpdate('scheduled', '2026-08-20', '14:00'), '2026-08-20T14:00:00Z');
+  assert.equal(dueAtForUpdate('queue', '2026-08-20', '14:00'), undefined);
+  assert.equal(dueAtForUpdate('scheduled', '2026-08-20', undefined), undefined);
+});
+
+test('America/Chicago pickers emit offset and round-trip across DST', () => {
+  const zone = 'America/Chicago';
+  assert.equal(combineDueAt('2026-08-20', '14:00', zone), '2026-08-20T14:00:00-05:00');
+  assert.equal(combineDueAt('2026-01-20', '14:00', zone), '2026-01-20T14:00:00-06:00');
+  assert.deepEqual(dueAtParts('2026-08-20T19:00:00Z', zone), { date: '2026-08-20', time: '14:00' });
+  assert.deepEqual(dueAtParts('2026-01-20T20:00:00Z', zone), { date: '2026-01-20', time: '14:00' });
+  assert.equal(dueAtForUpdate('scheduled', '2026-08-20', '14:00', zone), '2026-08-20T14:00:00-05:00');
+  assert.equal(dueAtForUpdate('queue', '2026-08-20', '14:00', zone), undefined);
+
+  const modal = editModal({
+    proposalId: 'social_1',
+    revision: 3,
+    target: { ...target, schedule_mode: 'scheduled', due_at: '2026-08-20T19:00:00Z' },
+    canonicalUrl: entry.proposal.canonical_url,
+    timeZone: zone,
+  });
+  assert.equal(modal.blocks.find((b) => b.block_id === 'due_time').element.timezone, zone);
+  assert.equal(modal.blocks.find((b) => b.block_id === 'due_date').element.initial_date, '2026-08-20');
+  assert.equal(modal.blocks.find((b) => b.block_id === 'due_time').element.initial_time, '14:00');
 });
 
 test('Instagram without media stays editable but cannot be approved', () => {
