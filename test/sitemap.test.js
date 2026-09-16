@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  extractArticleText,
   extractPageMetadata,
   extractSitemapPosts,
   fetchText,
@@ -89,4 +90,65 @@ test('creates a stable path idempotency key', () => {
 test('rejects unsuccessful HTTP responses', async () => {
   const fetchImpl = async () => new Response('missing', { status: 404 });
   await assert.rejects(fetchText('https://example.com/missing', fetchImpl), /HTTP 404/);
+});
+
+test('reads the article body, not just the meta description', () => {
+  const html = `<html><head>
+      <meta property="og:title" content="Large group rentals"/>
+      <meta property="og:description" content="A short summary."/>
+    </head><body><main>
+      <p>Sleeps twelve guests across five bedrooms.</p>
+      <p>Two minutes from the beach access path.</p>
+    </main></body></html>`;
+  const metadata = extractPageMetadata(html);
+  assert.equal(metadata.title, 'Large group rentals');
+  assert.match(metadata.excerpt, /A short summary\./);
+  assert.match(metadata.excerpt, /Sleeps twelve guests across five bedrooms\./);
+  assert.match(metadata.excerpt, /Two minutes from the beach access path\./);
+});
+
+test('prefers the container with text over an empty <article> wrapper', () => {
+  // The real failure: on a live post the only <article> wrapped the hero image
+  // and held no prose, so preferring it by tag name produced an empty excerpt.
+  const html = `<html><body>
+      <article><div><img alt="hero"/></div></article>
+      <div><p>The porch overlooks the marsh at sunset.</p></div>
+    </body></html>`;
+  assert.match(extractArticleText(html), /The porch overlooks the marsh at sunset\./);
+});
+
+test('excludes scripts, styles, and markup that is not prose', () => {
+  const html = `<html><body><main>
+      <script>var tracking = "do not quote me";</script>
+      <style>.cta { color: red; }</style>
+      <p>Pet friendly with a fenced yard.</p>
+    </main></body></html>`;
+  const text = extractArticleText(html);
+  assert.match(text, /Pet friendly with a fenced yard\./);
+  assert.doesNotMatch(text, /do not quote me/);
+  assert.doesNotMatch(text, /color: red/);
+});
+
+test('drops navigation repeated in the header and footer', () => {
+  const html = `<html><body>
+      <div>Blogs</div><div>Contact Us</div>
+      <main><p>Four bedrooms with an ocean view.</p></main>
+      <div>Blogs</div><div>Contact Us</div>
+    </body></html>`;
+  const lines = extractArticleText(html).split('\n');
+  assert.equal(lines.filter((line) => line === 'Blogs').length, 1);
+  assert.equal(lines.filter((line) => line === 'Contact Us').length, 1);
+});
+
+test('keeps block boundaries so words never fuse across elements', () => {
+  const html = '<html><body><main><p>Isle of Palms</p><p>Sullivans Island</p></main></body></html>';
+  assert.doesNotMatch(extractArticleText(html), /PalmsSullivans/);
+});
+
+test('truncates on a sentence boundary so a quote never spans the cut', () => {
+  const sentence = 'The cottage sleeps eight guests comfortably. ';
+  const html = `<html><body><main><p>${sentence.repeat(40)}</p></main></body></html>`;
+  const text = extractArticleText(html, 400);
+  assert.ok(text.length <= 400);
+  assert.ok(text.endsWith('.'), `expected a sentence end, got ${JSON.stringify(text.slice(-30))}`);
 });

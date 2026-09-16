@@ -45,11 +45,81 @@ function metaContent(html, name) {
   return '';
 }
 
+// BusinessOS grounds drafting in `title + excerpt` and then requires every
+// source_quote to be a verbatim substring of it, 5-500 characters, 1-8 quotes
+// per channel. A meta description is SEO-capped near 155 characters, which is
+// far less than that constraint assumes: measured across eight live posts,
+// title + og:description ran 38-226 characters, and a 38-character grounding
+// cannot yield four distinct quotes for four channels at all. Drafting then
+// fails quietly -- the ingest succeeds and no card is ever posted.
+//
+// So the readable article body goes in too. BusinessOS allows 64 KB of task
+// input; this bound keeps the prompt small enough for local inference while
+// leaving ample quotable text.
+export const MAX_ARTICLE_TEXT_CHARS = 6000;
+
+// Elements whose text is never part of the article and would poison quotes.
+const NON_CONTENT = /<(script|style|noscript|template|svg|nav|header|footer|form|aside|iframe|title)\b[^>]*>[\s\S]*?<\/\1>/gi;
+const BLOCK_BOUNDARY = /<\/(p|div|section|article|li|h[1-6]|tr|blockquote|pre)\s*>|<br\b[^>]*>/gi;
+
+export function extractArticleText(html, limit = MAX_ARTICLE_TEXT_CHARS) {
+  // Tag name is a poor signal: on a real Feather post the only <article>
+  // element wraps the hero image and contains no prose at all, so preferring it
+  // yielded an empty excerpt. Clean every plausible container and keep whichever
+  // actually carries the most text.
+  const candidates = [
+    ...[...html.matchAll(/<article\b[^>]*>([\s\S]*?)<\/article>/gi)].map((match) => match[1]),
+    html.match(/<main\b[^>]*>([\s\S]*?)<\/main>/i)?.[1],
+    html.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1],
+    html,
+  ].filter(Boolean);
+
+  let best = '';
+  for (const candidate of candidates) {
+    const text = cleanText(candidate);
+    if (text.length > best.length) best = text;
+  }
+
+  if (best.length <= limit) return best;
+  // Truncate on a sentence, then a word, so no quote spans a cut mid-token.
+  const window = best.slice(0, limit);
+  const sentence = window.lastIndexOf('. ');
+  if (sentence > limit * 0.6) return window.slice(0, sentence + 1);
+  const word = window.lastIndexOf(' ');
+  return (word > 0 ? window.slice(0, word) : window).trim();
+}
+
+function cleanText(fragment) {
+  return decode(
+    fragment
+      .replace(/<!--[\s\S]*?-->/g, ' ')
+      .replace(NON_CONTENT, ' ')
+      // Keep a separator at block edges so adjacent words do not fuse into a
+      // token that appears nowhere in the rendered article.
+      .replace(BLOCK_BOUNDARY, '\n')
+      .replace(/<[^>]+>/g, ' '),
+  )
+    .replace(/[ \t\r\f\v\u00a0]+/g, ' ')
+    .replace(/\s*\n\s*/g, '\n')
+    .replace(/\n{2,}/g, '\n')
+    .split('\n')
+    // Navigation is repeated verbatim in the header and footer of these pages
+    // and is not marked up as <nav>, so tag stripping cannot reach it. Dropping
+    // repeated lines removes it without guessing at site structure.
+    .filter((line, index, lines) => line !== '' && lines.indexOf(line) === index)
+    .join('\n')
+    .trim();
+}
+
 export function extractPageMetadata(html) {
   const titleTag = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? '';
   const title = metaContent(html, 'og:title') || decode(titleTag.replace(/<[^>]+>/g, '')).trim();
   if (!title) throw new Error('published page has no title');
-  const excerpt = metaContent(html, 'og:description') || metaContent(html, 'description');
+  const description = metaContent(html, 'og:description') || metaContent(html, 'description');
+  const article = extractArticleText(html);
+  // The description is a human-written summary and often the most quotable
+  // sentence on the page, so it stays even when the body is available.
+  const excerpt = [description, article].filter(Boolean).join('\n\n');
   return { title, excerpt };
 }
 
