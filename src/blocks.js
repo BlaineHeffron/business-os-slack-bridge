@@ -208,6 +208,40 @@ export function combineDueAt(date, time, timeZone = 'UTC') {
   return rfc3339(date, time, utcMs, zone);
 }
 
+// Decide the effective scheduling mode from what the owner did, not just what
+// the select says.
+//
+// The date and time inputs are prefilled from an existing due_at, so "has a
+// value" cannot mean "the owner chose it" -- the initial values are compared
+// against to tell a real edit from an untouched prefill.
+//
+// Setting a date and time is a clear statement of intent, so it selects
+// scheduling on the owner's behalf. That only applies while they left the
+// Scheduling select alone: deliberately choosing the queue is itself intent,
+// and overriding it would discard an explicit instruction. Choosing the queue
+// AND editing the fields is a genuine contradiction, reported as a conflict
+// rather than guessed at.
+export function resolveSchedule({
+  selectedMode,
+  pickedDate = null,
+  pickedTime = null,
+  initialDate = null,
+  initialTime = null,
+  initialScheduleMode = 'queue',
+}) {
+  const mode = selectedMode === 'scheduled' ? 'scheduled' : 'queue';
+  const touched = pickedDate !== initialDate || pickedTime !== initialTime;
+  const modeTouched = mode !== (initialScheduleMode === 'scheduled' ? 'scheduled' : 'queue');
+
+  if (mode !== 'scheduled' && touched && pickedDate && pickedTime && !modeTouched) {
+    return { mode: 'scheduled', conflict: false };
+  }
+  if (mode !== 'scheduled' && touched && (pickedDate || pickedTime)) {
+    return { mode, conflict: true };
+  }
+  return { mode, conflict: false };
+}
+
 export function dueAtForUpdate(scheduleMode, date, time, timeZone = 'UTC') {
   if (scheduleMode !== 'scheduled') return undefined;
   return combineDueAt(date, time, timeZone) ?? undefined;
@@ -226,6 +260,7 @@ export function editModal({ proposalId, revision, target, canonicalUrl, timeZone
       // force them to clear two fields they never touched.
       initialDate: date ?? null,
       initialTime: time ?? null,
+      initialScheduleMode: target.schedule_mode === 'scheduled' ? 'scheduled' : 'queue',
       proposalId,
       revision,
       channelId: target.channel_id,

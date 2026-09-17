@@ -22,7 +22,7 @@ import {
   setSeenSitemapPaths,
   addSeenSitemapPath,
 } from './state.js';
-import { proposalCard, editModal, deliveryLine, dueAtForUpdate } from './blocks.js';
+import { proposalCard, editModal, deliveryLine, dueAtForUpdate, resolveSchedule } from './blocks.js';
 import { startReadinessServer } from './readiness.js';
 import {
   extractPageMetadata,
@@ -277,25 +277,20 @@ app.view('edit_target_submit', async ({ ack, body, view }) => {
   const meta = JSON.parse(view.private_metadata);
   const text = modalValue(view, 'text')?.value?.trim() ?? '';
   const imageUrl = modalValue(view, 'image_url')?.value?.trim() || null;
-  const scheduleMode = modalValue(view, 'schedule_mode')?.selected_option?.value ?? 'queue';
   const dueTime = modalValue(view, 'due_time');
-  const dueAt = dueAtForUpdate(
-    scheduleMode,
-    modalValue(view, 'due_date')?.selected_date,
-    dueTime?.selected_time,
-    dueTime?.timezone || config.slackEditTimezone,
-  );
-
-  // A time entered under queue scheduling used to be discarded in silence:
-  // dueAtForUpdate returns undefined unless the mode is 'scheduled'. Only
-  // complain when the user actually changed the fields, so switching a
-  // previously scheduled target back to the queue does not demand they first
-  // clear a prefill they never touched.
   const pickedDate = modalValue(view, 'due_date')?.selected_date ?? null;
   const pickedTime = dueTime?.selected_time ?? null;
-  const scheduleTouched =
-    pickedDate !== (meta.initialDate ?? null) || pickedTime !== (meta.initialTime ?? null);
-  if (scheduleMode !== 'scheduled' && scheduleTouched && (pickedDate || pickedTime)) {
+
+  const { mode: scheduleMode, conflict } = resolveSchedule({
+    selectedMode: modalValue(view, 'schedule_mode')?.selected_option?.value ?? 'queue',
+    pickedDate,
+    pickedTime,
+    initialDate: meta.initialDate ?? null,
+    initialTime: meta.initialTime ?? null,
+    initialScheduleMode: meta.initialScheduleMode ?? 'queue',
+  });
+
+  if (conflict) {
     await ack({
       response_action: 'errors',
       errors: {
@@ -304,6 +299,13 @@ app.view('edit_target_submit', async ({ ack, body, view }) => {
     });
     return;
   }
+
+  const dueAt = dueAtForUpdate(
+    scheduleMode,
+    pickedDate,
+    pickedTime,
+    dueTime?.timezone || config.slackEditTimezone,
+  );
 
   if (scheduleMode === 'scheduled' && !dueAt) {
     await ack({

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { proposalCard, editModal, deliveryLine, dueAtParts, combineDueAt, dueAtForUpdate, usableTimeZone } from '../src/blocks.js';
+import { proposalCard, editModal, deliveryLine, dueAtParts, combineDueAt, dueAtForUpdate, usableTimeZone, resolveSchedule } from '../src/blocks.js';
 
 const target = {
   target_id: 't1',
@@ -208,4 +208,59 @@ test('an unusable zone falls back rather than throwing', () => {
   assert.equal(usableTimeZone('Not/AZone'), 'UTC');
   assert.equal(usableTimeZone(''), 'UTC');
   assert.equal(usableTimeZone('America/New_York'), 'America/New_York');
+});
+
+test('setting a date and time selects scheduling on the owner\'s behalf', () => {
+  assert.deepEqual(
+    resolveSchedule({ selectedMode: 'queue', pickedDate: '2026-10-01', pickedTime: '09:30' }),
+    { mode: 'scheduled', conflict: false },
+  );
+});
+
+test('an untouched prefill does not drag a queue target back to scheduling', () => {
+  // Switching a scheduled target to the queue leaves the prefilled date and
+  // time in place; that must not silently undo the mode change.
+  assert.deepEqual(
+    resolveSchedule({
+      selectedMode: 'queue',
+      pickedDate: '2026-10-01',
+      pickedTime: '09:30',
+      initialDate: '2026-10-01',
+      initialTime: '09:30',
+      initialScheduleMode: 'scheduled',
+    }),
+    { mode: 'queue', conflict: false },
+  );
+});
+
+test('choosing the queue and editing the time is a conflict, not a guess', () => {
+  assert.deepEqual(
+    resolveSchedule({
+      selectedMode: 'queue',
+      pickedDate: '2026-10-02',
+      pickedTime: '11:00',
+      initialDate: '2026-10-01',
+      initialTime: '09:30',
+      initialScheduleMode: 'scheduled',
+    }),
+    { mode: 'queue', conflict: true },
+  );
+});
+
+test('half a schedule is a conflict rather than an inferred switch', () => {
+  assert.deepEqual(
+    resolveSchedule({ selectedMode: 'queue', pickedDate: '2026-10-01' }),
+    { mode: 'queue', conflict: true },
+  );
+});
+
+test('an explicit scheduled choice is left alone', () => {
+  assert.deepEqual(
+    resolveSchedule({ selectedMode: 'scheduled', pickedDate: '2026-10-01', pickedTime: '09:30' }),
+    { mode: 'scheduled', conflict: false },
+  );
+});
+
+test('queue with nothing entered stays on the queue', () => {
+  assert.deepEqual(resolveSchedule({ selectedMode: 'queue' }), { mode: 'queue', conflict: false });
 });
