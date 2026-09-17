@@ -120,7 +120,64 @@ export function extractPageMetadata(html) {
   // The description is a human-written summary and often the most quotable
   // sentence on the page, so it stays even when the body is available.
   const excerpt = [description, article].filter(Boolean).join('\n\n');
-  return { title, excerpt };
+  return { title, excerpt, imageCandidates: imageCandidates(html) };
+}
+
+// Instagram targets cannot be approved without a public image and drafting
+// never sets one, so the article's own artwork is what keeps a proposal
+// approvable without manual work.
+//
+// og:image is the usual source and works on every article checked. Callers
+// still resolve the list against the network first, because sending an
+// unfetchable URL is worse than sending none: Buffer re-hosts the asset, so a
+// dead link fails during delivery instead of visibly blocking approval. The
+// rendered artwork is kept as a fallback for pages without usable metadata.
+export function imageCandidates(html) {
+  const seen = new Set();
+  const out = [];
+  const add = (value) => {
+    const url = (value ?? '').trim();
+    if (!url.startsWith('https://') || seen.has(url)) return;
+    seen.add(url);
+    out.push(url);
+  };
+
+  add(metaContent(html, 'og:image'));
+  add(metaContent(html, 'twitter:image'));
+
+  // Then the rendered article artwork, largest variant first: Buffer re-hosts
+  // the asset, so a thumbnail would be a permanent downgrade.
+  const scope =
+    html.match(/<article\b[^>]*>([\s\S]*?)<\/article>/i)?.[1] ??
+    html.match(/<main\b[^>]*>([\s\S]*?)<\/main>/i)?.[1] ??
+    html;
+  const rendered = [];
+  for (const tag of scope.matchAll(/<img\b[^>]*>/gi)) {
+    const src = attributes(tag[0]).src ?? '';
+    if (src.startsWith('https://')) rendered.push(src);
+  }
+  const rank = (url) => (/_small$/.test(url) ? 2 : /_medium$/.test(url) ? 1 : 0);
+  for (const url of rendered.sort((a, b) => rank(a) - rank(b))) add(url);
+
+  return out.slice(0, 6);
+}
+
+/** First candidate the network agrees is an image, or '' if none are. */
+export async function resolveImageUrl(candidates, fetchImpl = fetch) {
+  for (const url of candidates ?? []) {
+    try {
+      // HEAD keeps this cheap: the artwork runs to hundreds of KB and only the
+      // content type matters. Bodies are cancelled rather than left undrained,
+      // which otherwise holds connections open for the whole poll.
+      const response = await fetchImpl(url, { method: 'HEAD', signal: AbortSignal.timeout(10000) });
+      await response.body?.cancel?.().catch(() => {});
+      if (!response.ok) continue;
+      if ((response.headers.get('content-type') ?? '').startsWith('image/')) return url;
+    } catch {
+      // An unreachable candidate is simply not usable; try the next.
+    }
+  }
+  return '';
 }
 
 export function planSitemapChanges(posts, seenPaths) {

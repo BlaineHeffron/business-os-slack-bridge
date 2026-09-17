@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   extractArticleText,
+  imageCandidates,
+  resolveImageUrl,
   extractPageMetadata,
   extractSitemapPosts,
   fetchText,
@@ -56,11 +58,19 @@ test('reads social metadata without depending on attribute order', () => {
       <meta content="A &amp; B" property="og:title">
       <meta content="A useful author&#x27;s summary." name="description">
     </head></html>`;
-  assert.deepEqual(extractPageMetadata(html), { title: 'A & B', excerpt: "A useful author's summary." });
+  assert.deepEqual(extractPageMetadata(html), {
+    title: 'A & B',
+    excerpt: "A useful author's summary.",
+    imageCandidates: [],
+  });
 });
 
 test('uses the title element when Open Graph metadata is absent', () => {
-  assert.deepEqual(extractPageMetadata('<title>New Post</title>'), { title: 'New Post', excerpt: '' });
+  assert.deepEqual(extractPageMetadata('<title>New Post</title>'), {
+    title: 'New Post',
+    excerpt: '',
+    imageCandidates: [],
+  });
 });
 
 test('the first scan creates only a baseline', () => {
@@ -151,4 +161,55 @@ test('truncates on a sentence boundary so a quote never spans the cut', () => {
   const text = extractArticleText(html, 400);
   assert.ok(text.length <= 400);
   assert.ok(text.endsWith('.'), `expected a sentence end, got ${JSON.stringify(text.slice(-30))}`);
+});
+
+test('offers og:image first, then rendered artwork, largest variant first', () => {
+  const html = `<html><head>
+      <meta property="og:image" content="https://cdn.example.com/hero"/>
+    </head><body><article>
+      <img src="https://cdn.example.com/a_small"/>
+      <img src="https://cdn.example.com/a_medium"/>
+      <img src="https://cdn.example.com/a"/>
+    </article></body></html>`;
+  assert.deepEqual(imageCandidates(html), [
+    'https://cdn.example.com/hero',
+    'https://cdn.example.com/a',
+    'https://cdn.example.com/a_medium',
+    'https://cdn.example.com/a_small',
+  ]);
+});
+
+test('never offers a non-https candidate', () => {
+  const html = '<html><head><meta property="og:image" content="http://cdn.example.com/x"/></head></html>';
+  assert.deepEqual(imageCandidates(html), []);
+});
+
+test('skips a candidate the network refuses', async () => {
+  // Buffer re-hosts the asset, so an unfetchable URL fails during delivery
+  // rather than visibly blocking approval. Position in the list is not
+  // evidence that a URL actually serves an image.
+  const responses = {
+    'https://cdn.example.com/hero': { ok: false, status: 403, headers: new Map() },
+    'https://cdn.example.com/a': { ok: true, headers: new Map([['content-type', 'image/jpeg']]) },
+  };
+  const fake = async (url) => {
+    const r = responses[url];
+    if (!r) throw new Error('unreachable');
+    return { ok: r.ok, headers: { get: (k) => r.headers.get(k) ?? null } };
+  };
+  const chosen = await resolveImageUrl(
+    ['https://cdn.example.com/hero', 'https://cdn.example.com/a'],
+    fake,
+  );
+  assert.equal(chosen, 'https://cdn.example.com/a');
+});
+
+test('returns empty when nothing resolves, rather than a broken URL', async () => {
+  const fake = async () => ({ ok: false, headers: { get: () => null } });
+  assert.equal(await resolveImageUrl(['https://cdn.example.com/x'], fake), '');
+});
+
+test('rejects a reachable non-image', async () => {
+  const fake = async () => ({ ok: true, headers: { get: () => 'text/html' } });
+  assert.equal(await resolveImageUrl(['https://cdn.example.com/page'], fake), '');
 });

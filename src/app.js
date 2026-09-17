@@ -30,6 +30,7 @@ import {
   fetchText,
   planSitemapChanges,
   sitemapIdempotencyKey,
+  resolveImageUrl,
 } from './sitemap.js';
 
 const { App } = pkg;
@@ -172,6 +173,7 @@ async function pollSitemapOnce() {
         canonical_url: post.url,
         title: metadata.title,
         excerpt: metadata.excerpt || undefined,
+        image_url: (await resolveImageUrl(metadata.imageCandidates)) || undefined,
         idempotency_key: sitemapIdempotencyKey(post.externalId),
       });
       addSeenSitemapPath(post.externalId);

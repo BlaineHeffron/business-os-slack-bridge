@@ -68,9 +68,8 @@ export const actOnProposal = (proposalId, { action, expectedRevision, idempotenc
     actor_id: actorId,
   });
 
-/** Register published content through the bounded BusinessOS MCP tool. */
-export async function ingestPublishedContent(arguments_) {
-  const response = await request('POST', '/api/agent-mcp', {
+async function callIngest(arguments_) {
+  return request('POST', '/api/agent-mcp', {
     jsonrpc: '2.0',
     id: arguments_.idempotency_key,
     method: 'tools/call',
@@ -79,6 +78,25 @@ export async function ingestPublishedContent(arguments_) {
       arguments: arguments_,
     },
   });
+}
+
+/** Register published content through the bounded BusinessOS MCP tool. */
+export async function ingestPublishedContent(arguments_) {
+  let response = await callIngest(arguments_);
+
+  // The ingest contract is deny_unknown_fields, so a server without
+  // BusinessOS#26 rejects the whole call rather than ignoring image_url. Retry
+  // without it so an older server still ingests -- the proposal just arrives
+  // with no image, exactly as before. This falls away once the field lands.
+  if (response?.error && arguments_.image_url) {
+    const code = JSON.stringify(response.error);
+    if (code.includes('mcp_argument_invalid')) {
+      const { image_url: unsupported, ...rest } = arguments_;
+      console.log('BusinessOS does not accept image_url yet; ingesting without it');
+      response = await callIngest(rest);
+    }
+  }
+
   if (response?.error) throw new Error(`BusinessOS MCP error: ${JSON.stringify(response.error).slice(0, 500)}`);
   return response?.result;
 }
