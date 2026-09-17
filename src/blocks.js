@@ -220,6 +220,12 @@ export function editModal({ proposalId, revision, target, canonicalUrl, timeZone
     type: 'modal',
     callback_id: 'edit_target_submit',
     private_metadata: JSON.stringify({
+      // The date and time inputs are prefilled from an existing due_at. Keeping
+      // the prefilled values lets submit tell "the user typed a time" apart
+      // from "the user left the prefill alone", so switching to queue does not
+      // force them to clear two fields they never touched.
+      initialDate: date ?? null,
+      initialTime: time ?? null,
       proposalId,
       revision,
       channelId: target.channel_id,

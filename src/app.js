@@ -284,6 +284,25 @@ app.view('edit_target_submit', async ({ ack, body, view }) => {
     dueTime?.timezone || config.slackEditTimezone,
   );
 
+  // A time entered under queue scheduling used to be discarded in silence:
+  // dueAtForUpdate returns undefined unless the mode is 'scheduled'. Only
+  // complain when the user actually changed the fields, so switching a
+  // previously scheduled target back to the queue does not demand they first
+  // clear a prefill they never touched.
+  const pickedDate = modalValue(view, 'due_date')?.selected_date ?? null;
+  const pickedTime = dueTime?.selected_time ?? null;
+  const scheduleTouched =
+    pickedDate !== (meta.initialDate ?? null) || pickedTime !== (meta.initialTime ?? null);
+  if (scheduleMode !== 'scheduled' && scheduleTouched && (pickedDate || pickedTime)) {
+    await ack({
+      response_action: 'errors',
+      errors: {
+        schedule_mode: 'A date or time only applies to "Specific time". Switch Scheduling, or clear the date and time to use the Buffer queue.',
+      },
+    });
+    return;
+  }
+
   if (scheduleMode === 'scheduled' && !dueAt) {
     await ack({
       response_action: 'errors',

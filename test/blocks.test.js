@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { proposalCard, editModal, deliveryLine, dueAtParts, combineDueAt, dueAtForUpdate } from '../src/blocks.js';
+import { proposalCard, editModal, deliveryLine, dueAtParts, combineDueAt, dueAtForUpdate, usableTimeZone } from '../src/blocks.js';
 
 const target = {
   target_id: 't1',
@@ -174,4 +174,38 @@ test('dry-run delivery is labeled', () => {
     outbox_job: { job_id: 'j1', status: 'delivered', attempts: 1, dry_run: true },
   });
   assert.match(line, /dry-run — nothing posted/);
+});
+
+test('the edit modal carries the prefilled schedule values', () => {
+  const view = editModal({
+    proposalId: 'p1',
+    revision: 3,
+    target: { ...target, schedule_mode: 'scheduled', due_at: '2026-10-01T13:30:00.000Z' },
+    canonicalUrl: 'https://example.com/blog/x',
+    timeZone: 'America/New_York',
+  });
+  const meta = JSON.parse(view.private_metadata);
+  // Submit compares against these to tell a real edit from an untouched
+  // prefill, so a target switching back to the queue is not forced to clear
+  // fields the user never touched.
+  assert.equal(meta.initialDate, '2026-10-01');
+  assert.equal(meta.initialTime, '09:30');
+});
+
+test('the timepicker uses the configured zone, not UTC', () => {
+  const view = editModal({
+    proposalId: 'p1',
+    revision: 1,
+    target,
+    canonicalUrl: 'https://example.com/blog/x',
+    timeZone: 'America/New_York',
+  });
+  const picker = view.blocks.find((block) => block.block_id === 'due_time');
+  assert.equal(picker.element.timezone, 'America/New_York');
+});
+
+test('an unusable zone falls back rather than throwing', () => {
+  assert.equal(usableTimeZone('Not/AZone'), 'UTC');
+  assert.equal(usableTimeZone(''), 'UTC');
+  assert.equal(usableTimeZone('America/New_York'), 'America/New_York');
 });
