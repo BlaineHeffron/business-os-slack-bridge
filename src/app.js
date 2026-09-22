@@ -170,7 +170,7 @@ async function pollSitemapOnce() {
       // shell) must not block every later post; it stays unseen and is
       // retried on the next poll.
       try {
-        const metadata = extractPageMetadata(await fetchText(post.url));
+        const metadata = extractPageMetadata(await fetchText(post.url), post.url);
         await ingestPublishedContent({
           // BusinessOS source kinds allow only [A-Za-z0-9_.-]; a colon is rejected.
           source_kind: `sitemap.${new URL(config.sitemapUrl).hostname}`,
