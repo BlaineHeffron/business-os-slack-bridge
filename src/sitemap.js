@@ -111,12 +111,28 @@ function cleanText(fragment) {
     .trim();
 }
 
-export function extractPageMetadata(html) {
-  const titleTag = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? '';
-  const title = metaContent(html, 'og:title') || decode(titleTag.replace(/<[^>]+>/g, '')).trim();
-  if (!title) throw new Error('published page has no title');
+export function slugTitle(url) {
+  const slug = new URL(url).pathname.split('/').filter(Boolean).at(-1) ?? '';
+  const words = slug.replace(/\.[a-z0-9]+$/i, '').split(/[-_]+/).filter(Boolean);
+  return words.map((word, i) => (i === 0 ? word[0].toUpperCase() + word.slice(1) : word)).join(' ');
+}
+
+export function extractPageMetadata(html, url) {
+  const elementText = (name) =>
+    decode((html.match(new RegExp(`<${name}\\b[^>]*>([\\s\\S]*?)</${name}>`, 'i'))?.[1] ?? '').replace(/<[^>]+>/g, ''))
+      .replace(/\s+/g, ' ')
+      .trim();
   const description = metaContent(html, 'og:description') || metaContent(html, 'description');
   const article = extractArticleText(html);
+  // Some Feather posts publish without any SEO title metadata; fall back to the
+  // article heading, then to the URL slug. The slug is only acceptable when the
+  // page carries prose to draft from; an empty shell has nothing to ground on.
+  const title =
+    metaContent(html, 'og:title') ||
+    elementText('title') ||
+    elementText('h1') ||
+    (article && url ? slugTitle(url) : '');
+  if (!title) throw new Error('published page has no title, <title>, <h1>, or article text');
   // The description is a human-written summary and often the most quotable
   // sentence on the page, so it stays even when the body is available.
   const excerpt = [description, article].filter(Boolean).join('\n\n');

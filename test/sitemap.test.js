@@ -73,6 +73,19 @@ test('uses the title element when Open Graph metadata is absent', () => {
   });
 });
 
+test('falls back to the article heading when the page has no title metadata', () => {
+  const html = '<html><head><meta charset="utf-8"></head><body><h1 class="post">Mount\n  Pleasant &amp; <em>more</em></h1></body></html>';
+  assert.equal(extractPageMetadata(html).title, 'Mount Pleasant & more');
+  assert.throws(() => extractPageMetadata('<html><body><p>nothing</p></body></html>'), /no title/);
+});
+
+test('falls back to the URL slug only when the page has article text', () => {
+  const url = 'https://book.example.com/best-luxury-family-vacation-rentals-in-mount-pleasant-sc';
+  const prose = `<html><body><main><p>${'Shem Creek is a short walk away and the kitchens run at full tilt. '.repeat(8)}</p></main></body></html>`;
+  assert.equal(extractPageMetadata(prose, url).title, 'Best luxury family vacation rentals in mount pleasant sc');
+  assert.throws(() => extractPageMetadata('<html><body></body></html>', url), /no title/);
+});
+
 test('the first scan creates only a baseline', () => {
   const posts = [{ externalId: '/existing', url: 'https://book.example.com/existing' }];
   assert.deepEqual(planSitemapChanges(posts, null), {
