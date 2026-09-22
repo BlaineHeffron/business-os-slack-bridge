@@ -166,18 +166,26 @@ async function pollSitemapOnce() {
     }
 
     for (const post of changes.newPosts) {
-      const metadata = extractPageMetadata(await fetchText(post.url));
-      await ingestPublishedContent({
-        source_kind: `sitemap:${new URL(config.sitemapUrl).hostname}`,
-        external_id: post.externalId,
-        canonical_url: post.url,
-        title: metadata.title,
-        excerpt: metadata.excerpt || undefined,
-        image_url: (await resolveImageUrl(metadata.imageCandidates)) || undefined,
-        idempotency_key: sitemapIdempotencyKey(post.externalId),
-      });
-      addSeenSitemapPath(post.externalId);
-      console.log(`sitemap post ingested: ${post.url}`);
+      // One unreadable page (e.g. a Feather post that renders as an empty
+      // shell) must not block every later post; it stays unseen and is
+      // retried on the next poll.
+      try {
+        const metadata = extractPageMetadata(await fetchText(post.url));
+        await ingestPublishedContent({
+          // BusinessOS source kinds allow only [A-Za-z0-9_.-]; a colon is rejected.
+          source_kind: `sitemap.${new URL(config.sitemapUrl).hostname}`,
+          external_id: post.externalId,
+          canonical_url: post.url,
+          title: metadata.title,
+          excerpt: metadata.excerpt || undefined,
+          image_url: (await resolveImageUrl(metadata.imageCandidates)) || undefined,
+          idempotency_key: sitemapIdempotencyKey(post.externalId),
+        });
+        addSeenSitemapPath(post.externalId);
+        console.log(`sitemap post ingested: ${post.url}`);
+      } catch (error) {
+        console.error(`sitemap post skipped: ${post.url}: ${error.message}`);
+      }
     }
   } catch (error) {
     console.error('sitemap poll failed:', error.message);

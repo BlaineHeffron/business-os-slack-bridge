@@ -112,9 +112,14 @@ function cleanText(fragment) {
 }
 
 export function extractPageMetadata(html) {
-  const titleTag = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? '';
-  const title = metaContent(html, 'og:title') || decode(titleTag.replace(/<[^>]+>/g, '')).trim();
-  if (!title) throw new Error('published page has no title');
+  const elementText = (name) =>
+    decode((html.match(new RegExp(`<${name}\\b[^>]*>([\\s\\S]*?)</${name}>`, 'i'))?.[1] ?? '').replace(/<[^>]+>/g, ''))
+      .replace(/\s+/g, ' ')
+      .trim();
+  // Some Feather posts publish without any SEO title metadata; fall back to the
+  // article heading before giving up.
+  const title = metaContent(html, 'og:title') || elementText('title') || elementText('h1');
+  if (!title) throw new Error('published page has no title, <title>, or <h1>');
   const description = metaContent(html, 'og:description') || metaContent(html, 'description');
   const article = extractArticleText(html);
   // The description is a human-written summary and often the most quotable
