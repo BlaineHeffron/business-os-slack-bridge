@@ -1,6 +1,6 @@
 {
   "name": "business-os-slack-bridge",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "private": true,
   "license": "Apache-2.0",
   "description": "Slack Block Kit approval surface for BusinessOS social_publishing proposals",
