@@ -59,7 +59,7 @@ export const updateProposal = (proposalId, { canonicalUrl, targets, expectedRevi
     actor_id: actorId,
   });
 
-/** POST /api/social-publishing/proposals/{id}/action — approve or reject the exact revision. */
+/** POST /api/social-publishing/proposals/{id}/action — approve, reject, or redraft the exact revision. */
 export const actOnProposal = (proposalId, { action, expectedRevision, idempotencyKey, actorId }) =>
   request('POST', `/api/social-publishing/proposals/${encodeURIComponent(proposalId)}/action`, {
     action,

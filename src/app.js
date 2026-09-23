@@ -208,6 +208,13 @@ async function handleAction(action, body, client) {
       actorId: actorFor(body.user.id),
     });
     await pollOnce();
+    if (action === 'redraft') {
+      await client.chat.postEphemeral({
+        channel: config.slackChannelId,
+        user: body.user.id,
+        text: 'Re-drafting. A new card will appear here once BusinessOS finishes (usually a few minutes).',
+      });
+    }
   } catch (error) {
     if (error instanceof RevisionConflictError) {
       await client.chat.postEphemeral({
@@ -237,6 +244,12 @@ app.action('reject_proposal', async ({ ack, body, client }) => {
   await ack();
   if (!isApprover(body.user.id)) return denyEphemeral(client, body);
   await handleAction('reject', body, client);
+});
+
+app.action('redraft_proposal', async ({ ack, body, client }) => {
+  await ack();
+  if (!isApprover(body.user.id)) return denyEphemeral(client, body);
+  await handleAction('redraft', body, client);
 });
 
 // ---------------------------------------------------------------------------
