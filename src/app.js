@@ -198,14 +198,37 @@ async function pollSitemapOnce() {
 // Approve / Reject
 // ---------------------------------------------------------------------------
 
-async function handleAction(action, body, client) {
+// Switch every target to Buffer draft mode, returning the revision to approve.
+async function switchToDraft(proposalId, revision, actorId) {
+  const { proposals } = await listProposals();
+  const proposal = proposals.find((e) => e.proposal.proposal_id === proposalId)?.proposal;
+  if (!proposal || proposal.targets.every((t) => t.schedule_mode === 'draft')) return revision;
+  const result = await updateProposal(proposalId, {
+    canonicalUrl: proposal.canonical_url,
+    targets: proposal.targets.map((t) => ({
+      channel_id: t.channel_id,
+      text: t.text,
+      image_url: t.image_url ?? undefined,
+      utm: t.utm,
+      schedule_mode: 'draft',
+    })),
+    expectedRevision: revision,
+    idempotencyKey: `slack:${proposalId}:${revision}:draft`,
+    actorId,
+  });
+  return result.revision;
+}
+
+async function handleAction(action, body, client, { asDraft = false } = {}) {
   const { proposalId, revision } = JSON.parse(body.actions[0].value);
   try {
+    const actorId = actorFor(body.user.id);
+    const expectedRevision = asDraft ? await switchToDraft(proposalId, revision, actorId) : revision;
     await actOnProposal(proposalId, {
       action,
-      expectedRevision: revision,
-      idempotencyKey: `slack:${proposalId}:${revision}:${action}`,
-      actorId: actorFor(body.user.id),
+      expectedRevision,
+      idempotencyKey: `slack:${proposalId}:${expectedRevision}:${action}`,
+      actorId,
     });
     await pollOnce();
     if (action === 'redraft') {
@@ -238,6 +261,12 @@ app.action('approve_proposal', async ({ ack, body, client }) => {
   await ack();
   if (!isApprover(body.user.id)) return denyEphemeral(client, body);
   await handleAction('approve', body, client);
+});
+
+app.action('approve_draft_proposal', async ({ ack, body, client }) => {
+  await ack();
+  if (!isApprover(body.user.id)) return denyEphemeral(client, body);
+  await handleAction('approve', body, client, { asDraft: true });
 });
 
 app.action('reject_proposal', async ({ ack, body, client }) => {

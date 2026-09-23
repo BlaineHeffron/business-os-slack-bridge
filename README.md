@@ -27,7 +27,9 @@ loopback HTTP. It is a companion program, not a module loaded into the server.
    clobbering each other.
 4. Approve sends the exact revision shown on the card. A stale card 409s, the
    card refreshes, and the owner re-confirms. Approval fans out one Buffer
-   outbox job per channel inside BusinessOS.
+   outbox job per channel inside BusinessOS. Approve as Buffer draft first
+   switches every channel to draft mode, then approves: Buffer saves drafts
+   and nothing publishes until someone schedules them in Buffer.
 5. Delivery receipts (`delivered`, dry-run, `failed_terminal`,
    `delivery_outcome_unknown`) are threaded under the card.
    `delivery_outcome_unknown` is broadcast because it needs manual

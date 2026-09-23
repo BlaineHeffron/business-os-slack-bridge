@@ -71,6 +71,7 @@ test('edit modal prefills current target', () => {
     [
       ['queue', 'Next queue slot'],
       ['scheduled', 'Specific time'],
+      ['draft', 'Buffer draft (not scheduled)'],
     ],
   );
   const dueDate = modal.blocks.find((b) => b.block_id === 'due_date');
@@ -275,4 +276,28 @@ test('an explicit scheduled choice is left alone', () => {
 
 test('queue with nothing entered stays on the queue', () => {
   assert.deepEqual(resolveSchedule({ selectedMode: 'queue' }), { mode: 'queue', conflict: false });
+});
+
+test('staged card offers approve-as-draft; draft targets are labelled and preselected', () => {
+  const actions = proposalCard(entry, { liveEnabled: true })
+    .filter((b) => b.type === 'actions')
+    .flatMap((b) => b.elements);
+  const draft = actions.find((a) => a.action_id === 'approve_draft_proposal');
+  assert.deepEqual(JSON.parse(draft.value), { proposalId: 'social_1', revision: 3 });
+
+  const drafted = { ...target, schedule_mode: 'draft' };
+  const card = proposalCard({ ...entry, proposal: { ...entry.proposal, targets: [drafted] } }, { liveEnabled: true });
+  assert.ok(JSON.stringify(card).includes('Buffer draft (not scheduled)'));
+  const modal = editModal({ proposalId: 'social_1', revision: 3, target: drafted, canonicalUrl: entry.proposal.canonical_url });
+  const select = modal.blocks.find((b) => b.block_id === 'schedule_mode').element;
+  assert.equal(select.initial_option.value, 'draft');
+  assert.equal(JSON.parse(modal.private_metadata).initialScheduleMode, 'draft');
+});
+
+test('choosing Buffer draft is kept, not collapsed to the queue', () => {
+  assert.deepEqual(resolveSchedule({ selectedMode: 'draft' }), { mode: 'draft', conflict: false });
+  assert.deepEqual(
+    resolveSchedule({ selectedMode: 'draft', pickedDate: '2026-10-01', pickedTime: '09:30' }),
+    { mode: 'draft', conflict: true },
+  );
 });
