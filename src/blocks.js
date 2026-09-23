@@ -123,6 +123,23 @@ export function proposalCard(entry, { liveEnabled }) {
         },
       });
     }
+    if (proposal.source_id) {
+      elements.push({
+        type: 'button',
+        text: { type: 'plain_text', text: 'Re-draft' },
+        action_id: 'redraft_proposal',
+        value: JSON.stringify({ proposalId: proposal.proposal_id, revision }),
+        confirm: {
+          title: { type: 'plain_text', text: 'Draft this post again?' },
+          text: {
+            type: 'mrkdwn',
+            text: 'This card is rejected and BusinessOS drafts fresh copy for the currently configured channels. A new card appears here in a few minutes.',
+          },
+          confirm: { type: 'plain_text', text: 'Re-draft' },
+          deny: { type: 'plain_text', text: 'Cancel' },
+        },
+      });
+    }
     elements.push({
       type: 'button',
       style: 'danger',

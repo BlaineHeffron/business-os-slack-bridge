@@ -19,7 +19,8 @@ loopback HTTP. It is a companion program, not a module loaded into the server.
    BusinessOS drafts per-channel copy and stages a proposal.
 2. The bridge poller sees the `staged` proposal and posts one card: per-channel
    preview (text, image, schedule), an Edit button per channel, Approve /
-   Reject. Instagram proposals without their required public image stay
+   Re-draft / Reject. Re-draft rejects the card and has BusinessOS draft the
+   source again under the channels configured now; a new card follows. Instagram proposals without their required public image stay
    editable but cannot be approved.
 3. Edit opens a modal prefilled with the current text. Saving replaces the
    snapshot with `expected_revision`, so concurrent edits 409 instead of

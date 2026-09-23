@@ -35,6 +35,18 @@ test('staged card carries approve/reject with exact revision', () => {
   assert.deepEqual(JSON.parse(approve.value), { proposalId: 'social_1', revision: 3 });
   assert.ok(actions.find((a) => a.action_id === 'reject_proposal'));
   assert.ok(actions.find((a) => a.action_id === 'edit_target'));
+  // Manually staged proposals have no source to draft again from.
+  assert.equal(actions.some((a) => a.action_id === 'redraft_proposal'), false);
+});
+
+test('a proposal drafted from a source offers re-draft with the exact revision', () => {
+  const sourced = { ...entry, proposal: { ...entry.proposal, source_id: 'socialsrc_1' } };
+  const actions = proposalCard(sourced, { liveEnabled: true })
+    .filter((b) => b.type === 'actions')
+    .flatMap((b) => b.elements);
+  const redraft = actions.find((a) => a.action_id === 'redraft_proposal');
+  assert.ok(redraft);
+  assert.deepEqual(JSON.parse(redraft.value), { proposalId: 'social_1', revision: 3 });
 });
 
 test('approved card has no buttons', () => {
