@@ -13,9 +13,9 @@ const truncate = (text, max = 2900) =>
   text.length > max ? `${text.slice(0, max - 1)}…` : text;
 
 function scheduleLine(target) {
-  return target.schedule_mode === 'scheduled'
-    ? `:calendar: scheduled ${target.due_at}`
-    : ':inbox_tray: Buffer queue';
+  if (target.schedule_mode === 'scheduled') return `:calendar: scheduled ${target.due_at}`;
+  if (target.schedule_mode === 'draft') return ':memo: Buffer draft (not scheduled)';
+  return ':inbox_tray: Buffer queue';
 }
 
 function targetBlocks(proposal, revision, target, { editable }) {
@@ -122,6 +122,21 @@ export function proposalCard(entry, { liveEnabled }) {
           deny: { type: 'plain_text', text: 'Cancel' },
         },
       });
+      elements.push({
+        type: 'button',
+        text: { type: 'plain_text', text: 'Approve as Buffer draft' },
+        action_id: 'approve_draft_proposal',
+        value: JSON.stringify({ proposalId: proposal.proposal_id, revision }),
+        confirm: {
+          title: { type: 'plain_text', text: 'Send as Buffer drafts?' },
+          text: {
+            type: 'mrkdwn',
+            text: 'Every channel is saved as a Buffer draft. Nothing is scheduled or published until you schedule it in Buffer.',
+          },
+          confirm: { type: 'plain_text', text: 'Send drafts' },
+          deny: { type: 'plain_text', text: 'Cancel' },
+        },
+      });
     }
     if (proposal.source_id) {
       elements.push({
@@ -160,6 +175,9 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 const QUEUE_OPTION = { text: { type: 'plain_text', text: 'Next queue slot' }, value: 'queue' };
 const SCHEDULED_OPTION = { text: { type: 'plain_text', text: 'Specific time' }, value: 'scheduled' };
+const DRAFT_OPTION = { text: { type: 'plain_text', text: 'Buffer draft (not scheduled)' }, value: 'draft' };
+const SCHEDULE_OPTIONS = [QUEUE_OPTION, SCHEDULED_OPTION, DRAFT_OPTION];
+const normalizeMode = (mode) => (SCHEDULE_OPTIONS.some((o) => o.value === mode) ? mode : 'queue');
 
 export function usableTimeZone(timeZone) {
   const tz = typeof timeZone === 'string' && timeZone.trim() ? timeZone.trim() : 'UTC';
@@ -246,9 +264,9 @@ export function resolveSchedule({
   initialTime = null,
   initialScheduleMode = 'queue',
 }) {
-  const mode = selectedMode === 'scheduled' ? 'scheduled' : 'queue';
+  const mode = normalizeMode(selectedMode);
   const touched = pickedDate !== initialDate || pickedTime !== initialTime;
-  const modeTouched = mode !== (initialScheduleMode === 'scheduled' ? 'scheduled' : 'queue');
+  const modeTouched = mode !== normalizeMode(initialScheduleMode);
 
   if (mode !== 'scheduled' && touched && pickedDate && pickedTime && !modeTouched) {
     return { mode: 'scheduled', conflict: false };
@@ -277,7 +295,7 @@ export function editModal({ proposalId, revision, target, canonicalUrl, timeZone
       // force them to clear two fields they never touched.
       initialDate: date ?? null,
       initialTime: time ?? null,
-      initialScheduleMode: target.schedule_mode === 'scheduled' ? 'scheduled' : 'queue',
+      initialScheduleMode: normalizeMode(target.schedule_mode),
       proposalId,
       revision,
       channelId: target.channel_id,
@@ -323,8 +341,8 @@ export function editModal({ proposalId, revision, target, canonicalUrl, timeZone
         element: {
           type: 'static_select',
           action_id: 'value',
-          initial_option: target.schedule_mode === 'scheduled' ? SCHEDULED_OPTION : QUEUE_OPTION,
-          options: [QUEUE_OPTION, SCHEDULED_OPTION],
+          initial_option: SCHEDULE_OPTIONS.find((o) => o.value === normalizeMode(target.schedule_mode)),
+          options: SCHEDULE_OPTIONS,
         },
       },
       {
