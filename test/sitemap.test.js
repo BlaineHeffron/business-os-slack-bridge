@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import {
   extractArticleText,
   imageCandidates,
+  imageDimensions,
+  MAX_IMAGE_DIMENSION,
+  resizedImageUrl,
   resolveImageUrl,
+  srcsetVariant,
   extractPageMetadata,
   extractSitemapPosts,
   fetchText,
@@ -197,19 +201,43 @@ test('never offers a non-https candidate', () => {
   assert.deepEqual(imageCandidates(html), []);
 });
 
+// Minimal headers that imageDimensions can read.
+function png(width, height) {
+  const b = new Uint8Array(33);
+  b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+  new DataView(b.buffer).setUint32(16, width);
+  new DataView(b.buffer).setUint32(20, height);
+  return b;
+}
+
+function jpeg(width, height, { exifBytes = 0 } = {}) {
+  const exif = [0xff, 0xe1, ((exifBytes + 2) >> 8) & 0xff, (exifBytes + 2) & 0xff, ...new Array(exifBytes).fill(0)];
+  const sof = [0xff, 0xc0, 0, 17, 8, height >> 8, height & 0xff, width >> 8, width & 0xff, 3, ...new Array(9).fill(0)];
+  return new Uint8Array([0xff, 0xd8, ...exif, ...sof, 0xff, 0xd9]);
+}
+
+const image = (bytes, type = 'image/jpeg') => () =>
+  new Response(bytes, { headers: { 'content-type': type, 'content-length': String(bytes.length) } });
+
+function fakeNetwork(routes) {
+  const requested = [];
+  const fake = async (url) => {
+    requested.push(url);
+    const route = routes[url];
+    if (!route) throw new Error('unreachable');
+    return route();
+  };
+  return { fake, requested };
+}
+
 test('skips a candidate the network refuses', async () => {
   // Buffer re-hosts the asset, so an unfetchable URL fails during delivery
   // rather than visibly blocking approval. Position in the list is not
   // evidence that a URL actually serves an image.
-  const responses = {
-    'https://cdn.example.com/hero': { ok: false, status: 403, headers: new Map() },
-    'https://cdn.example.com/a': { ok: true, headers: new Map([['content-type', 'image/jpeg']]) },
-  };
-  const fake = async (url) => {
-    const r = responses[url];
-    if (!r) throw new Error('unreachable');
-    return { ok: r.ok, headers: { get: (k) => r.headers.get(k) ?? null } };
-  };
+  const { fake } = fakeNetwork({
+    'https://cdn.example.com/hero': () => new Response(null, { status: 403 }),
+    'https://cdn.example.com/a': image(jpeg(1200, 800)),
+  });
   const chosen = await resolveImageUrl(
     ['https://cdn.example.com/hero', 'https://cdn.example.com/a'],
     fake,
@@ -218,11 +246,91 @@ test('skips a candidate the network refuses', async () => {
 });
 
 test('returns empty when nothing resolves, rather than a broken URL', async () => {
-  const fake = async () => ({ ok: false, headers: { get: () => null } });
+  const fake = async () => new Response(null, { status: 404 });
   assert.equal(await resolveImageUrl(['https://cdn.example.com/x'], fake), '');
 });
 
 test('rejects a reachable non-image', async () => {
-  const fake = async () => ({ ok: true, headers: { get: () => 'text/html' } });
+  const fake = async () => new Response('<html></html>', { headers: { 'content-type': 'text/html' } });
   assert.equal(await resolveImageUrl(['https://cdn.example.com/page'], fake), '');
+});
+
+test('reads image sizes from JPEG, PNG, GIF, and WebP headers', () => {
+  assert.deepEqual(imageDimensions(jpeg(6000, 4000, { exifBytes: 300 })), { width: 6000, height: 4000 });
+  assert.deepEqual(imageDimensions(png(1080, 1350)), { width: 1080, height: 1350 });
+  const gif = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x40, 0x01, 0xf0, 0x00]);
+  assert.deepEqual(imageDimensions(gif), { width: 320, height: 240 });
+  const webp = new Uint8Array(30);
+  webp.set([...'RIFF'].map((c) => c.charCodeAt(0)), 0);
+  webp.set([...'WEBPVP8X'].map((c) => c.charCodeAt(0)), 8);
+  webp.set([0x7f, 0x07, 0x00, 0x37, 0x04, 0x00], 24); // 1920 x 1080, minus one
+  assert.deepEqual(imageDimensions(webp), { width: 1920, height: 1080 });
+  // A JPEG cut off before its frame header is "not known yet", not a size.
+  assert.equal(imageDimensions(jpeg(6000, 4000, { exifBytes: 300 }).subarray(0, 100)), null);
+  assert.equal(imageDimensions(new TextEncoder().encode('<html>')), null);
+});
+
+test("prefers the page's own resized copy of og:image", () => {
+  // The live Feather markup: og:image is the camera original and the hero
+  // <img> carries relative Next.js variants of the same file.
+  const original = 'https://cdn.example.com/blog_image/abc';
+  const variant = (w) => `/_next/image?url=${encodeURIComponent(original)}&amp;w=${w}&amp;q=75 ${w}w`;
+  const html = `<html><head>
+      <meta property="og:image" content="${original}"/>
+    </head><body><article>
+      <img alt="hero" sizes="100vw" srcSet="${[640, 1080, 1920, 3840].map(variant).join(', ')}"
+        src="/_next/image?url=${encodeURIComponent(original)}&amp;w=3840&amp;q=75"/>
+    </article></body></html>`;
+  const sized = `https://blog.example.com/_next/image?url=${encodeURIComponent(original)}&w=1920&q=75`;
+  assert.deepEqual(imageCandidates(html, 'https://blog.example.com/post'), [sized, original]);
+  assert.deepEqual(srcsetVariant('a.jpg 2400w, b.jpg 1200w', 'https://x.example/'), {
+    url: 'https://x.example/b.jpg',
+    original: 'https://x.example/b.jpg',
+  });
+  assert.equal(srcsetVariant('a.jpg 1x, b.jpg 2x', 'https://x.example/'), null);
+});
+
+test('an image that fits is used as-is', async () => {
+  const { fake, requested } = fakeNetwork({ 'https://cdn.example.com/a': image(jpeg(1920, 1280)) });
+  assert.equal(await resolveImageUrl(['https://cdn.example.com/a'], fake), 'https://cdn.example.com/a');
+  assert.deepEqual(requested, ['https://cdn.example.com/a']);
+});
+
+test('an oversized image is replaced by a resized copy', async () => {
+  // The failure that prompted this: Buffer refused a 6000px original.
+  const original = 'https://cdn.example.com/blog_image/abc';
+  const resized = resizedImageUrl(original);
+  const { fake } = fakeNetwork({
+    [original]: image(jpeg(6000, 4000, { exifBytes: 300 })),
+    [resized]: image(jpeg(1920, 1280)),
+  });
+  assert.equal(await resolveImageUrl([original], fake), resized);
+  const proxy = new URL(resized);
+  assert.equal(proxy.origin, 'https://images.weserv.nl');
+  assert.equal(proxy.searchParams.get('url'), original);
+  assert.equal(proxy.searchParams.get('w'), String(MAX_IMAGE_DIMENSION));
+  assert.equal(proxy.searchParams.get('output'), 'jpg');
+});
+
+test('a format Instagram refuses, or an unreadable size, is converted too', async () => {
+  const webp = 'https://cdn.example.com/a.webp';
+  const unknown = 'https://cdn.example.com/b';
+  const { fake } = fakeNetwork({
+    [webp]: image(png(800, 800), 'image/webp'),
+    [resizedImageUrl(webp)]: image(jpeg(800, 800)),
+    [unknown]: image(new Uint8Array([0xff, 0xd8, 0xff, 0xd9])),
+    [resizedImageUrl(unknown)]: image(jpeg(1000, 700)),
+  });
+  assert.equal(await resolveImageUrl([webp], fake), resizedImageUrl(webp));
+  assert.equal(await resolveImageUrl([unknown], fake), resizedImageUrl(unknown));
+});
+
+test('moves on when the resizing proxy cannot serve a usable copy', async () => {
+  const big = 'https://cdn.example.com/big';
+  const { fake } = fakeNetwork({
+    [big]: image(jpeg(6000, 4000)),
+    [resizedImageUrl(big)]: () => new Response(null, { status: 502 }),
+    'https://cdn.example.com/fits': image(png(1080, 1080), 'image/png'),
+  });
+  assert.equal(await resolveImageUrl([big, 'https://cdn.example.com/fits'], fake), 'https://cdn.example.com/fits');
 });
