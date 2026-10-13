@@ -152,7 +152,9 @@ export function extractPageMetadata(html, url) {
 // og:image is often the untouched camera original, though. Feather published a
 // 6000px JPEG and Buffer rejected the Instagram post at delivery ("Image width
 // (6000px) exceeds the 5,000px maximum for Instagram"). Where the page itself
-// serves a resized copy through a srcset, that copy goes first.
+// serves a resized copy through a srcset, that copy goes first. A copy that is
+// format-negotiated is still converted by resolveImageUrl, but from the
+// smaller file.
 export function imageCandidates(html, pageUrl) {
   const seen = new Set();
   const out = [];
@@ -286,9 +288,19 @@ export function imageDimensions(bytes) {
   return null;
 }
 
+// Ask the way a browser does. Image servers negotiate on Accept: Next.js
+// /_next/image answers this with WebP, which Instagram refuses, while a bare
+// request gets JPEG. Buffer's own fetch is not documented, so check against the
+// answer a modern client gets rather than the friendliest one.
+const BROWSER_IMAGE_ACCEPT = 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8';
+
 // Fetch only as much of the body as the size header needs, then let go.
-async function inspectImage(url, fetchImpl) {
-  const response = await fetchImpl(url, { signal: AbortSignal.timeout(20000) });
+async function inspectImage(url, fetchImpl, signal) {
+  const timeout = AbortSignal.timeout(20000);
+  const response = await fetchImpl(url, {
+    headers: { accept: BROWSER_IMAGE_ACCEPT },
+    signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
+  });
   if (!response.ok) {
     await response.body?.cancel?.().catch(() => {});
     return null;
@@ -332,16 +344,18 @@ function postableAsIs({ type, length, dimensions }) {
  * First candidate the network agrees is an image, or '' if none are. An image
  * Instagram would reject for size or format, or whose size cannot be read,
  * comes back as a resized JPEG copy through the proxy instead, once the proxy
- * has shown it can serve one.
+ * has shown it can serve one. `signal` bounds the whole resolution, for
+ * callers with a deadline of their own.
  */
-export async function resolveImageUrl(candidates, fetchImpl = fetch) {
+export async function resolveImageUrl(candidates, fetchImpl = fetch, { signal } = {}) {
   for (const url of candidates ?? []) {
+    if (signal?.aborted) break;
     try {
-      const image = await inspectImage(url, fetchImpl);
+      const image = await inspectImage(url, fetchImpl, signal);
       if (!image) continue;
       if (postableAsIs(image)) return url;
       const resized = resizedImageUrl(url);
-      const copy = await inspectImage(resized, fetchImpl);
+      const copy = await inspectImage(resized, fetchImpl, signal);
       if (copy && postableAsIs(copy)) return resized;
     } catch {
       // An unreachable candidate is simply not usable; try the next.

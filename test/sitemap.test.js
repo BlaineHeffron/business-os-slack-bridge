@@ -334,3 +334,34 @@ test('moves on when the resizing proxy cannot serve a usable copy', async () => 
   });
   assert.equal(await resolveImageUrl([big, 'https://cdn.example.com/fits'], fake), 'https://cdn.example.com/fits');
 });
+
+test('gives up when the caller runs out of time', async () => {
+  // The Slack edit modal must answer within 3 seconds; a slow image host
+  // must fail the field rather than the whole submission.
+  const slow = (url, { signal }) =>
+    new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason));
+    });
+  // A plain timer, unlike AbortSignal.timeout, keeps the test's event loop alive.
+  const budget = new AbortController();
+  setTimeout(() => budget.abort(new Error('budget spent')), 50);
+  const started = Date.now();
+  const chosen = await resolveImageUrl(['https://cdn.example.com/a', 'https://cdn.example.com/b'], slow, {
+    signal: budget.signal,
+  });
+  assert.equal(chosen, '');
+  assert.ok(Date.now() - started < 1000);
+});
+
+test('a server that would hand a browser WebP is converted to JPEG', async () => {
+  // Next.js /_next/image negotiates on Accept: JPEG for a bare request, WebP
+  // for a browser. Buffer may well ask like a browser.
+  const variant = 'https://blog.example.com/_next/image?url=x&w=1920&q=75';
+  const negotiating = (url, { headers }) =>
+    /image\/webp/.test(headers?.accept ?? '')
+      ? image(png(1920, 1280), 'image/webp')()
+      : image(jpeg(1920, 1280))();
+  const { fake } = fakeNetwork({ [resizedImageUrl(variant)]: image(jpeg(1920, 1280)) });
+  const routed = (url, init) => (url === variant ? negotiating(url, init) : fake(url, init));
+  assert.equal(await resolveImageUrl([variant], routed), resizedImageUrl(variant));
+});
