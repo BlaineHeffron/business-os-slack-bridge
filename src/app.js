@@ -316,6 +316,10 @@ app.action('edit_target', async ({ ack, body, client }) => {
 
 const modalValue = (view, blockId) => view.state.values[blockId]?.value;
 
+// Leaves room inside Slack's 3-second acknowledgement window for the
+// BusinessOS update that follows.
+const EDIT_IMAGE_BUDGET_MS = 2000;
+
 app.view('edit_target_submit', async ({ ack, body, view }) => {
   if (!isApprover(body.user.id)) {
     await ack({
@@ -376,9 +380,27 @@ app.view('edit_target_submit', async ({ ack, body, view }) => {
     return;
   }
 
+  // A typed URL gets the same size and format handling as an article image,
+  // so an oversized photo is swapped for a resized copy here rather than
+  // failing at Buffer after approval. Slack drops a modal not acknowledged
+  // within 3 seconds, so this runs beside the proposal fetch under a budget.
   // Re-fetch and rebuild the full target set: the update endpoint replaces the
   // whole snapshot and must cover every configured channel.
-  const response = await listProposals();
+  const [usableImageUrl, response] = await Promise.all([
+    imageUrl
+      ? resolveImageUrl([imageUrl], fetch, { signal: AbortSignal.timeout(EDIT_IMAGE_BUDGET_MS) })
+      : null,
+    listProposals(),
+  ]);
+  if (imageUrl && !usableImageUrl) {
+    await ack({
+      response_action: 'errors',
+      errors: {
+        image_url: 'Could not load an image from that URL. It must be a public image link; large photos are resized automatically.',
+      },
+    });
+    return;
+  }
   const entry = response.proposals.find((e) => e.proposal.proposal_id === meta.proposalId);
   if (!entry || entry.proposal.status !== 'staged' || entry.revision !== meta.revision) {
     await ack({
@@ -393,7 +415,7 @@ app.view('edit_target_submit', async ({ ack, body, view }) => {
     return {
       channel_id: t.channel_id,
       text: edited ? text : t.text,
-      image_url: (edited ? imageUrl : t.image_url) ?? undefined,
+      image_url: (edited ? usableImageUrl : t.image_url) ?? undefined,
       utm: t.utm,
       schedule_mode: edited ? scheduleMode : t.schedule_mode,
       due_at:
